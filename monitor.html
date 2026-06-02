@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simulation Monitor</title>
+    <style>
+        body { background-color: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; padding: 20px; overflow: hidden; }
+        .monitor-grid { display: grid; grid-template-columns: 3fr 1fr; grid-template-rows: repeat(4, 1fr); height: 90vh; gap: 15px; }
+        .trace-container { display: flex; align-items: center; background: #050505; border: 1px solid #222; padding: 10px; }
+        .numeric { display: flex; flex-direction: column; justify-content: center; align-items: center; font-size: 4rem; font-weight: bold; border-left: 2px solid #333; }
+        .label { font-size: 1.2rem; font-weight: bold; margin-bottom: 5px; }
+        
+        .ecg { color: #00ff00; }     
+        .spo2 { color: #00ffff; }    
+        .nibp { color: #ffff00; }    
+        .capno { color: #ff00ff; }   
+        
+        canvas { width: 100%; height: 80px; }
+    </style>
+</head>
+<body>
+
+    <div class="monitor-grid">
+        <div class="trace-container ecg"><canvas id="ecgCanvas"></canvas></div>
+        <div class="numeric ecg"><div class="label">HR</div><span id="hr-val">75</span></div>
+
+        <div class="trace-container spo2"><canvas id="spo2Canvas"></canvas></div>
+        <div class="numeric spo2"><div class="label">SpO2</div><span id="spo2-val">98</span>%</div>
+
+        <div class="trace-container nibp"><span style="font-size: 1.5rem;">Non-Invasive BP</span></div>
+        <div class="numeric nibp"><div class="label">NIBP</div><span id="nibp-val">120/80</span></div>
+
+        <div class="trace-container capno"><canvas id="capnoCanvas"></canvas></div>
+        <div class="numeric capno"><div class="label">EtCO2</div><span id="etco2-val">38</span></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        
+        const hrVal = document.getElementById('hr-val');
+        const spo2Val = document.getElementById('spo2-val');
+        const nibpVal = document.getElementById('nibp-val');
+        const etco2Val = document.getElementById('etco2-val');
+
+        let step = 0;
+        const capnoCanvas = document.getElementById('capnoCanvas');
+        const ctxCapno = capnoCanvas.getContext('2d');
+        let currentEtco2 = 38;
+
+        function drawWaveforms() {
+            step++;
+            ctxCapno.clearRect(0, 0, capnoCanvas.width, capnoCanvas.height);
+            ctxCapno.strokeStyle = '#ff00ff';
+            ctxCapno.lineWidth = 2;
+            ctxCapno.beginPath();
+            
+            for (let i = 0; i < capnoCanvas.width; i++) {
+                let y = 40;
+                if (currentEtco2 > 0) {
+                    let cycle = (i + step) % 100;
+                    if (cycle > 30 && cycle < 70) {
+                        y = 10; 
+                    }
+                }
+                if (i === 0) ctxCapno.moveTo(i, y);
+                else ctxCapno.lineTo(i, y);
+            }
+            ctxCapno.stroke();
+            requestAnimationFrame(drawWaveforms);
+        }
+        drawWaveforms();
+
+        // Prevent tablet screen sleep
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (err) {
+                console.log(`Wake Lock error: ${err.message}`);
+            }
+        }
+
+        window.addEventListener('load', requestWakeLock);
+        document.addEventListener('visibilitychange', () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                requestWakeLock();
+            }
+        });
+
+        socket.on('vitalsChanged', (data) => {
+            if(data.hr) hrVal.innerText = data.hr;
+            if(data.spo2) spo2Val.innerText = data.spo2;
+            if(data.nibp) nibpVal.innerText = data.nibp;
+            if(data.etco2 !== undefined) {
+                etco2Val.innerText = data.etco2;
+                currentEtco2 = data.etco2;
+            }
+        });
+    </script>
+</body>
+</html>
