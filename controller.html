@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sim Controller</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #222; color: #fff; padding: 15px; }
+        h2 { text-align: center; color: #00ff00; }
+        .section { background: #333; padding: 15px; margin-bottom: 15px; border-radius: 8px; }
+        button { width: 100%; padding: 15px; margin: 5px 0; font-size: 1.1rem; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; }
+        .btn-blue { background: #007bff; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        label { display: block; margin: 10px 0 5px; font-weight: bold; }
+        input { width: 90%; padding: 10px; font-size: 1rem; background: #444; color: #fff; border: 1px solid #555; }
+    </style>
+</head>
+<body>
+
+    <h2>Scenario Control</h2>
+
+    <div class="section">
+        <h3>Bag & Mask Scenario Macros</h3>
+        <button class="btn-blue" onclick="triggerBaseline()">1. Spontaneous Breathing (Baseline)</button>
+        <button class="btn-danger" onclick="triggerApnea()">2. Induction (Apnea / No Ventilation)</button>
+        <button class="btn-success" onclick="triggerSuccessfulBag()">3. Successful Bag & Mask</button>
+        <button class="btn-danger" onclick="triggerFailedBag()">4. Failed Bag & Mask</button>
+    </div>
+
+    <div class="section">
+        <h3>Manual Tweaks</h3>
+        <label>HR</label><input type="number" id="hr" value="75">
+        <label>SpO2 (%)</label><input type="number" id="spo2" value="98">
+        <label>EtCO2</label><input type="number" id="etco2" value="38">
+        <label>NIBP</label><input type="text" id="nibp" value="120/80">
+        <button style="background:#555; color:white; margin-top:10px;" onclick="sendManual()">Send Manual Changes</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        function sendUpdate(vitals) {
+            socket.emit('updateVitals', vitals);
+        }
+
+        function triggerBaseline() {
+            sendUpdate({ hr: 75, spo2: 98, etco2: 38, nibp: "120/80" });
+        }
+
+        function triggerApnea() {
+            sendUpdate({ hr: 82, spo2: 94, etco2: 0, nibp: "115/75" });
+        }
+
+        function triggerSuccessfulBag() {
+            sendUpdate({ hr: 74, spo2: 99, etco2: 40, nibp: "118/78" });
+        }
+
+        function triggerFailedBag() {
+            sendUpdate({ hr: 46, spo2: 68, etco2: 0, nibp: "85/45" });
+        }
+
+        function sendManual() {
+            sendUpdate({
+                hr: document.getElementById('hr').value,
+                spo2: document.getElementById('spo2').value,
+                etco2: document.getElementById('etco2').value,
+                nibp: document.getElementById('nibp').value
+            });
+        }
+    </script>
+</body>
+</html>
