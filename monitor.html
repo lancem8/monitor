@@ -1,65 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simulation Monitor</title>
+    <style>
+        body { background-color: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; padding: 20px; overflow: hidden; }
+        .monitor-grid { display: grid; grid-template-columns: 3fr 1fr; grid-template-rows: repeat(4, 1fr); height: 90vh; gap: 15px; }
+        .trace-container { display: flex; align-items: center; background: #050505; border: 1px solid #222; padding: 10px; position: relative; }
+        .numeric { display: flex; flex-direction: column; justify-content: center; align-items: center; font-size: 5rem; font-weight: bold; border-left: 2px solid #333; position: relative; }
+        .label { font-size: 1.2rem; font-weight: bold; position: absolute; top: 10px; left: 15px; }
+        
+        /* High Contrast Color Coding */
+        .ecg { color: #00ff00; }     
+        .spo2 { color: #00ffff; }    
+        .capno { color: #ff00ff; }   
+        .nibp { color: #ffff00; }    
+        
+        canvas { width: 100%; height: 90px; }
+        .static-wave-text { font-size: 2rem; font-weight: bold; margin-left: 20px; opacity: 0.7; }
+    </style>
+</head>
+<body>
+
+    <div class="monitor-grid">
+        <div class="trace-container ecg"><span class="static-wave-text">▲▼▲▼||||||▲▼▲▼</span></div>
+        <div class="numeric ecg"><div class="label">HR</div><span id="hr-val">75</span></div>
+
+        <div class="trace-container spo2"><span class="static-wave-text">~~~~~~~/~~~~~~~</span></div>
+        <div class="numeric spo2"><div class="label">SpO2 %</div><span id="spo2-val">98</span></div>
+
+        <div class="trace-container capno"><canvas id="capnoCanvas"></canvas></div>
+        <div class="numeric capno"><div class="label">EtCO2</div><span id="etco2-val">38</span></div>
+
+        <div class="trace-container nibp"><span class="static-wave-text">Non-Invasive Blood Pressure</span></div>
+        <div class="numeric nibp"><div class="label">NIBP</div><span id="nibp-val" style="font-size: 4rem;">120/80</span></div>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
         
-        // Vitals values
+        // Dynamic Vitals Tracking
         let currentHR = 75;
         let currentSpO2 = 98;
         let currentEtco2 = 38;
 
-        // DOM elements
         const hrVal = document.getElementById('hr-val');
         const spo2Val = document.getElementById('spo2-val');
         const nibpVal = document.getElementById('nibp-val');
         const etco2Val = document.getElementById('etco2-val');
 
-        // Setup Canvases
-        const setupCanvas = (id) => {
-            const canvas = document.getElementById(id);
-            const ctx = canvas.getContext('2d');
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
-            return { canvas, ctx };
-        };
-
-        const ecg = setupCanvas('ecgCanvas');
-        const spo2 = setupCanvas('spo2Canvas');
-        const capno = setupCanvas('capnoCanvas');
-
-        // Waveform parameters
-        let x = 0;
-        const speed = 2.5; 
+        // Capnography Canvas Setup
+        const canvas = document.getElementById('capnoCanvas');
+        const ctx = canvas.getContext('2d');
         
-        function clearAhead(ctx, currentX, width, height) {
-            ctx.clearRect(currentX, 0, 20, height);
+        // Force explicit dimensions so canvas drawing won't fail
+        canvas.width = 600;
+        canvas.height = 90;
+
+        let step = 0;
+
+        function drawCapnography() {
+            step += 2; // Speed of wave movement
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#ff00ff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            
+            for (let i = 0; i < canvas.width; i++) {
+                let y = 75; // Baseline floor (near bottom of canvas)
+                
+                if (currentEtco2 > 0) {
+                    let cycle = (i + step) % 120; // Length of a breath cycle
+                    if (cycle > 30 && cycle < 90) {
+                        y = 15; // Alveolar plateau (Taller wave, closer to top of canvas)
+                    }
+                }
+                
+                if (i === 0) ctx.moveTo(i, y);
+                else ctx.lineTo(i, y);
+            }
+            ctx.stroke();
+            requestAnimationFrame(drawCapnography);
         }
+        drawCapnography();
 
-        let lastEcgY = ecg.canvas.height / 2;
-        let lastSpo2Y = spo2.canvas.height * 0.7;
-        let lastCapnoY = capno.canvas.height * 0.85;
-
-        let ecgTimer = 0;
-        let capnoTimer = 0;
-        let beepTriggered = false;
-
-        // Web Audio API Configuration
+        // Web Audio Synth for SpO2 Beep
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         let audioCtx = null;
+        let beepInterval = null;
 
         function initAudio() {
             if (!audioCtx) {
                 audioCtx = new AudioContext();
+                startBeepLoop();
             }
         }
 
-        function playOximeterBeep(spo2Value) {
+        function playBeep() {
             if (!audioCtx || currentSpO2 <= 0) return;
-            
-            // Standard medical monitor scale: Calculate frequency based on SpO2 percentage
-            // 100% SpO2 = ~750Hz, down to 70% SpO2 = ~400Hz
-            const baseFreq = 400; 
-            const freqStep = 11.6; 
-            const frequency = baseFreq + (Math.max(70, spo2Value) - 70) * freqStep;
+
+            // Calculate precise clinical pitch based on SpO2 (100% = 750Hz, 70% = 400Hz)
+            const frequency = 400 + (Math.max(70, currentSpO2) - 70) * 11.6;
 
             const osc = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
@@ -67,8 +109,7 @@
             osc.type = 'sine';
             osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
 
-            // Short, crisp 120ms pulse oximeter beep duration
-            gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
             gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.12);
 
             osc.connect(gainNode);
@@ -78,88 +119,21 @@
             osc.stop(audioCtx.currentTime + 0.12);
         }
 
-        function animate() {
-            x += speed;
-            if (x > ecg.canvas.width) x = 0;
-
-            clearAhead(ecg.ctx, x, ecg.canvas.width, ecg.canvas.height);
-            clearAhead(spo2.ctx, x, spo2.canvas.width, spo2.canvas.height);
-            clearAhead(capno.ctx, x, capno.canvas.width, capno.canvas.height);
-
-            // 1. ECG Waveform
-            let ecgY = ecg.canvas.height / 2;
-            const ecgCycleFrames = Math.max(20, (60 / currentHR) * 60 * (speed / 2)); 
-            ecgTimer++;
-            if (ecgTimer > ecgCycleFrames) {
-                ecgTimer = 0;
-                beepTriggered = false; // Reset tone trigger for the next heartbeat
-            }
-
-            if (ecgTimer > 0 && ecgTimer < 3) ecgY -= 5; 
-            else if (ecgTimer >= 4 && ecgTimer <= 6) { 
-                if (ecgTimer === 4) ecgY += 10;
-                if (ecgTimer === 5) ecgY -= 45; 
-                if (ecgTimer === 6) ecgY += 25;
-            }
-            else if (ecgTimer > 12 && ecgTimer < 18) ecgY -= 8; 
-
-            ecg.ctx.beginPath();
-            ecg.ctx.strokeStyle = '#00ff00';
-            ecg.ctx.lineWidth = 2.5;
-            ecg.ctx.moveTo(x - speed, lastEcgY);
-            ecg.ctx.lineTo(x, ecgY);
-            ecg.ctx.stroke();
-            lastEcgY = ecgY;
-
-            // 2. SpO2 Pleth Waveform & Audio Sync
-            let spo2Y = spo2.canvas.height * 0.65;
-            if (currentSpO2 > 0) {
-                let plethDelay = ecgTimer - 8; 
-                if (plethDelay > 0 && plethDelay < 25) {
-                    spo2Y -= Math.sin((plethDelay / 25) * Math.PI) * 30; 
-                    
-                    // Trigger the audio beep precisely at the peak pulse inflection
-                    if (plethDelay >= 6 && !beepTriggered) {
-                        playOximeterBeep(currentSpO2);
-                        beepTriggered = true;
-                    }
-                }
-            }
-
-            spo2.ctx.beginPath();
-            spo2.ctx.strokeStyle = '#00ffff';
-            spo2.ctx.lineWidth = 2.5;
-            spo2.ctx.moveTo(x - speed, lastSpo2Y);
-            spo2.ctx.lineTo(x, spo2Y);
-            spo2.ctx.stroke();
-            lastSpo2Y = spo2Y;
-
-            // 3. Capnography Waveform
-            let capnoY = capno.canvas.height * 0.85; 
-            if (currentEtco2 > 0) {
-                capnoTimer += 0.04;
-                let capnoCycle = capnoTimer % (2 * Math.PI);
-                
-                if (capnoCycle < Math.PI * 0.8) {
-                    capnoY = capno.canvas.height * 0.2; 
-                } else if (capnoCycle >= Math.PI * 0.8 && capnoCycle < Math.PI * 1.0) {
-                    let interpolation = (capnoCycle - (Math.PI * 0.8)) / (Math.PI * 0.2);
-                    capnoY = (capno.canvas.height * 0.2) + (interpolation * (capno.canvas.height * 0.65));
-                }
-            }
-
-            capno.ctx.beginPath();
-            capno.ctx.strokeStyle = '#ff00ff';
-            capno.ctx.lineWidth = 3;
-            capno.ctx.moveTo(x - speed, lastCapnoY);
-            capno.ctx.lineTo(x, capnoY);
-            capno.ctx.stroke();
-            lastCapnoY = capnoY;
-
-            requestAnimationFrame(animate);
+        // Keep the beep repeating automatically based on the current Heart Rate
+        function startBeepLoop() {
+            if (beepInterval) clearInterval(beepInterval);
+            
+            const intervalMs = (60 / currentHR) * 1000;
+            beepInterval = setInterval(() => {
+                playBeep();
+            }, intervalMs);
         }
 
-        // Screen Wake Lock API & Sound Activation Trigger
+        // Activate audio context on first screen interaction
+        window.addEventListener('click', initAudio);
+        window.addEventListener('touchstart', initAudio);
+
+        // Wake Lock to keep screen awake
         let wakeLock = null;
         async function requestWakeLock() {
             try {
@@ -168,26 +142,22 @@
                 }
             } catch (err) { console.log(err.message); }
         }
+        window.addEventListener('load', requestWakeLock);
 
-        // Browsers block audio until a user interaction occurs.
-        // Tapping the tablet screen once activates the monitor audio context.
-        window.addEventListener('click', () => {
-            initAudio();
-        });
-        window.addEventListener('touchstart', () => {
-            initAudio();
-        });
-
-        window.addEventListener('load', () => { requestWakeLock(); animate(); });
-        document.addEventListener('visibilitychange', () => {
-            if (wakeLock !== null && document.visibilityState === 'visible') requestWakeLock();
-        });
-
-        // Listen for updates from phone controller
+        // Receive real-time phone instructions
         socket.on('vitalsChanged', (data) => {
-            if(data.hr) { hrVal.innerText = data.hr; currentHR = parseInt(data.hr); }
-            if(data.spo2) { spo2Val.innerText = data.spo2; currentSpO2 = parseInt(data.spo2); }
-            if(data.nibp) nibpVal.innerText = data.nibp;
+            if(data.hr) { 
+                hrVal.innerText = data.hr; 
+                currentHR = parseInt(data.hr);
+                if (audioCtx) startBeepLoop(); // Dynamically recalibrate beep speed to match new HR
+            }
+            if(data.spo2) { 
+                spo2Val.innerText = data.spo2; 
+                currentSpO2 = parseInt(data.spo2); 
+            }
+            if(data.nibp) {
+                nibpVal.innerText = data.nibp;
+            }
             if(data.etco2 !== undefined) {
                 etco2Val.innerText = data.etco2;
                 currentEtco2 = parseInt(data.etco2);
